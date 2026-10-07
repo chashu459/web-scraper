@@ -128,8 +128,16 @@ def fetch_article(url, timeout=30):
         return {"title": None, "text": text, "author": None, "date": None}
 
     paragraphs = []
-    if art.body is not None:
-        for p in art.body.iter("p", "hi", "lb"):
+    body = art.body
+    if isinstance(body, str):
+        # older trafilatura returns the XML body as a string
+        from lxml import etree
+        try:
+            body = etree.fromstring(body.encode("utf-8"))
+        except Exception:
+            body = None
+    if body is not None:
+        for p in body.iter("p", "hi", "lb"):
             t = "".join(p.itertext()).strip()
             if t:
                 paragraphs.append(t)

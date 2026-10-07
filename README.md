@@ -8,6 +8,13 @@ Two small Python tools that save web content as EPUB ebooks:
 - **`novel.py`** — downloads a whole novel from novellunar.com as a single
   EPUB, with cover, title, author, synopsis, and genres filled in
   automatically.
+- **`wp_novel.py`** — downloads a novel from a WordPress translation blog
+  (e.g. bluesilvertranslations.wordpress.com) as a single EPUB. Chapter
+  lists grouped under volume headings are parsed, and chapter text is pulled
+  from the embedded Google Docs each post links to. Volumes appear as
+  sections in the book's table of contents.
+- **`dedup_cache.py`** — removes duplicate chapters from a `novel.py`
+  cache directory.
 
 ## Quick start
 
@@ -22,6 +29,10 @@ Two small Python tools that save web content as EPUB ebooks:
 # Novel: the whole thing (takes a few hours at the default polite pace)
 ./.venv/bin/python novel.py https://novellunar.com/novel/the-unrivaled-tang-sect \
     -o tang-sect.epub
+
+# WordPress blog novel: quick 2-chapter test
+./.venv/bin/python wp_novel.py https://bluesilvertranslations.wordpress.com/chapter-list/ \
+    -o test.epub --start 1 --end 2 --min-delay 1 --max-delay 2
 ```
 
 ## Setup from scratch
@@ -83,9 +94,71 @@ Example — bundle several articles into one reading list:
 | `--min-delay` / `--max-delay` | Random pause between chapters in seconds (default: 2–4) |
 | `--no-cover` | Skip downloading the cover image |
 | `--no-meta` | Skip fetching title/author/synopsis metadata |
+| `--cache-dir` | Where to keep downloaded chapters (default: `./.cache/<slug>/`) |
+| `--refresh` | Ignore the cache and re-download everything |
+| `--no-dedup` | Keep chapters with identical text (default: skip duplicates) |
 
 The novel URL looks like `https://novellunar.com/novel/<slug>` — just paste
 the novel's main page.
+
+### Duplicate chapters
+
+Some sites list stale duplicate chapters (same text under two different
+numbers — e.g. chapter 2 duplicating chapter 1.1). The tool hashes each
+chapter's text and skips exact duplicates so the book doesn't repeat
+itself, logging which chapter each dupe matched. Deduplication is per run;
+use `--no-dedup` to keep everything as listed.
+
+### Resuming interrupted runs
+
+Downloaded chapters are cached as JSON files in `./.cache/<slug>/`, so if
+the run is interrupted (or crashes), just run the same command again — only
+the missing chapters are fetched, and the EPUB is rebuilt from everything.
+Corrupt or empty cache files are automatically re-downloaded. Use
+`--refresh` to force a full re-download, or `--cache-dir` to put the cache
+somewhere else.
+
+### Cleaning duplicates from an existing cache
+
+If you downloaded chapters before deduplication existed, clean the cache
+with the standalone script (it uses the same text-hashing as the EPUB
+build):
+
+```bash
+./.venv/bin/python dedup_cache.py .cache/the-unrivaled-tang-sect --dry-run  # preview
+./.venv/bin/python dedup_cache.py .cache/the-unrivaled-tang-sect           # quarantine dupes
+```
+
+For each set of identical chapters it keeps the lowest-numbered one and
+moves the rest to `<cache>/_duplicates/` (recoverable). `--delete` removes
+them permanently instead. After cleaning, re-running `novel.py` rebuilds
+the EPUB without the repeats.
+
+## wp_novel.py — WordPress blog novels to EPUB
+
+```bash
+./.venv/bin/python wp_novel.py CHAPTER_LIST_URL [-o book.epub] [--start N] [--end N]
+    [--min-delay 2] [--max-delay 4] [--title "Title"] [--author "Author"]
+    [--cache-dir DIR] [--refresh] [--no-dedup] [--dry-run]
+```
+
+| Option | What it does |
+|---|---|
+| `-o, --output` | Output file (default: `wordpress-novel.epub`) |
+| `--title` / `--author` | Book title/author (default: parsed from the blog, e.g. "Douluo Dalu" by "Tang Jia San Shao") |
+| `--start` / `--end` | Chapter range, 1-based positions in the list |
+| `--min-delay` / `--max-delay` | Random pause between chapters in seconds (default: 2–4) |
+| `--cache-dir` | Where to keep downloaded chapters (default: `./.cache/<blog-domain>/`) |
+| `--refresh` | Ignore the cache and re-download everything |
+| `--no-dedup` | Keep chapters with identical text (default: skip duplicates) |
+| `--dry-run` | List chapters that would be downloaded, then exit |
+
+How it works: the chapter-list page's volume sections are parsed in order
+(if the page repeats the list, the last complete listing wins); each
+chapter post's Google Docs link is followed and the published doc's
+paragraphs extracted. Volumes become sections in the book's table of
+contents. Same politeness rules as `novel.py` (random delays, backoff on
+rate limits), plus the same chapter cache for resumable runs.
 
 ## Being polite to servers
 

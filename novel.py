@@ -6,6 +6,11 @@ Usage:
     python novel.py https://novellunar.com/novel/the-unrivaled-tang-sect \\
         [-o book.epub] [--start 1] [--end 50]
         [--min-delay 2] [--max-delay 4] [--no-cover] [--no-meta]
+        [--cache-dir DIR] [--refresh] [--no-dedup]
+
+Resuming: downloaded chapters are cached in ./.cache/<slug>/ (as JSON), so
+interrupting the run and starting it again only fetches what is missing.
+Use --refresh to re-download everything.
 
 How it works:
 - Novel metadata (title, author, synopsis, genres, cover) is read from the
@@ -21,8 +26,11 @@ rate-limit (429) responses trigger exponential backoff. robots.txt allows
 crawling (Allow: /).
 """
 import argparse
+import hashlib
 import html as htmlmod
 import io
+import json
+import os
 import re
 import sys
 import time
@@ -77,6 +85,35 @@ def get_novel_meta(session, slug):
         "genres": genres,
         "cover_url": _og(soup, "image"),
     }
+
+
+def cache_path(cache_dir, number):
+    return os.path.join(cache_dir, f"{number}.json")
+
+
+def load_cached(cache_dir, number):
+    """Return cached chapter dict, or None if missing/corrupt/empty."""
+    if not cache_dir:
+        return None
+    p = cache_path(cache_dir, number)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        if d.get("text", "").strip():
+            return d
+    except Exception:
+        pass
+    return None
+
+
+def save_cached(cache_dir, number, title, text):
+    os.makedirs(cache_dir, exist_ok=True)
+    tmp = cache_path(cache_dir, number) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"number": number, "title": title, "text": text}, f)
+    os.replace(tmp, cache_path(cache_dir, number))
 
 
 def get_cover_bytes(session, cover_url):
@@ -144,7 +181,8 @@ def get_chapter_text(session, slug, number, timeout=30):
 
 def build_novel_epub(slug, chapters, session, out_path, book_title,
                      min_delay, max_delay, start, end, meta=None,
-                     cover_bytes=None):
+                     cover_bytes=None, cache_dir=None, refresh=False,
+                     no_dedup=False):
     book = epub.EpubBook()
     book.set_identifier(f"novel-{slug}-{int(time.time())}")
     book.set_title(book_title or (meta or {}).get("title") or slug.replace("-", " ").title())
@@ -162,17 +200,39 @@ def build_novel_epub(slug, chapters, session, out_path, book_title,
     selected = [c for c in chapters if (start is None or c[0] >= start)
                 and (end is None or c[0] <= end)]
     toc = []
+    n_cached = n_fresh = n_dupes = 0
+    seen_hashes = {}  # normalized-text hash -> chapter number
     for i, (number, title) in enumerate(selected, 1):
         chapter_title = title or f"Chapter {number}"
-        print(f"[{i}/{len(selected)}] chapter {number}: {chapter_title[:60]}")
-        try:
-            text = get_chapter_text(session, slug, number)
-        except Exception as e:
-            print(f"    failed: {e}", file=sys.stderr)
-            continue
-        if not text:
-            print("    no text found, skipped", file=sys.stderr)
-            continue
+        cached = None if refresh else load_cached(cache_dir, number)
+        if cached:
+            text = cached["text"]
+            chapter_title = cached.get("title") or chapter_title
+            print(f"[{i}/{len(selected)}] chapter {number}: from cache")
+            n_cached += 1
+        else:
+            print(f"[{i}/{len(selected)}] chapter {number}: {chapter_title[:60]}")
+            try:
+                text = get_chapter_text(session, slug, number)
+            except Exception as e:
+                print(f"    failed: {e}", file=sys.stderr)
+                continue
+            if not text:
+                print("    no text found, skipped", file=sys.stderr)
+                continue
+            if cache_dir:
+                save_cached(cache_dir, number, chapter_title, text)
+            n_fresh += 1
+            polite_sleep(min_delay, max_delay)
+        # Some sites list stale duplicate chapters (same text, different
+        # number). Skip exact duplicates so the book doesn't repeat itself.
+        if not no_dedup:
+            h = hashlib.md5("".join(text.split()).encode("utf-8")).hexdigest()
+            if h in seen_hashes:
+                print(f"    duplicate of chapter {seen_hashes[h]}, skipped")
+                n_dupes += 1
+                continue
+            seen_hashes[h] = number
         ch = epub.EpubHtml(
             title=chapter_title,
             file_name=f"chap{i:04d}.xhtml",
@@ -180,7 +240,6 @@ def build_novel_epub(slug, chapters, session, out_path, book_title,
         )
         book.add_item(ch)
         toc.append(ch)
-        polite_sleep(min_delay, max_delay)
 
     if not toc:
         print("Nothing to save — no chapters extracted.", file=sys.stderr)
@@ -191,7 +250,9 @@ def build_novel_epub(slug, chapters, session, out_path, book_title,
     book.add_item(epub.EpubNav())
     book.spine = ["nav"] + toc
     epub.write_epub(out_path, book)
-    print(f"Saved {len(toc)} chapter(s) to {out_path}")
+    print(f"Saved {len(toc)} chapter(s) to {out_path} "
+          f"({n_fresh} downloaded, {n_cached} from cache"
+          f"{f', {n_dupes} duplicates skipped' if n_dupes else ''})")
     return True
 
 
@@ -210,10 +271,17 @@ def main():
                     help="Skip downloading the cover image")
     ap.add_argument("--no-meta", action="store_true",
                     help="Skip fetching novel metadata (title/author/synopsis)")
+    ap.add_argument("--cache-dir", default=None,
+                    help="Directory for cached chapters (default: ./.cache/<slug>/)")
+    ap.add_argument("--refresh", action="store_true",
+                    help="Ignore the cache and re-download everything")
+    ap.add_argument("--no-dedup", action="store_true",
+                    help="Keep chapters with identical text (default: skip duplicates)")
     args = ap.parse_args()
 
     slug = slug_from_url(args.url)
     session = requests.Session()
+    cache_dir = args.cache_dir or os.path.join(".cache", slug)
 
     meta = {}
     if not args.no_meta:
@@ -249,7 +317,8 @@ def main():
 
     ok = build_novel_epub(slug, chapters, session, out, title,
                           args.min_delay, args.max_delay,
-                          args.start, args.end, meta, cover_bytes)
+                          args.start, args.end, meta, cover_bytes,
+                          cache_dir, args.refresh, args.no_dedup)
     sys.exit(0 if ok else 1)
 
 

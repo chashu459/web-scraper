@@ -77,13 +77,17 @@ def fetch_with_retry(client, url, timeout=30, max_retries=4, referer=None,
     hammering the server. Extra kwargs (e.g. params) go to client.get.
     """
     backoff = 5
+    short = url if len(url) <= 80 else url[:77] + "..."
     for attempt in range(max_retries + 1):
         try:
             resp = client.get(url, headers=make_headers(referer),
                               timeout=timeout, **kwargs)
-        except requests.RequestException:
+        except requests.RequestException as e:
             if attempt == max_retries:
                 raise
+            print(f"    request failed ({type(e).__name__}), "
+                  f"retry {attempt + 1}/{max_retries} in {backoff}s: {short}",
+                  file=sys.stderr)
             time.sleep(backoff)
             backoff *= 2
             continue
@@ -102,6 +106,9 @@ def fetch_with_retry(client, url, timeout=30, max_retries=4, referer=None,
         if resp.status_code in (500, 502, 503, 504):
             if attempt == max_retries:
                 resp.raise_for_status()
+            print(f"    server error {resp.status_code}, "
+                  f"retry {attempt + 1}/{max_retries} in {backoff}s: {short}",
+                  file=sys.stderr)
             time.sleep(backoff)
             backoff *= 2
             continue

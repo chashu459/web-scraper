@@ -13,6 +13,10 @@ Two small Python tools that save web content as EPUB ebooks:
   lists grouped under volume headings are parsed, and chapter text is pulled
   from the embedded Google Docs each post links to. Volumes appear as
   sections in the book's table of contents.
+- **`wuxia_novel.py`** — downloads a novel from wuxiaworld.com as a single
+  EPUB, with cover, title, and author filled in automatically. The
+  novel-specific chapter URL prefix and the total chapter count are
+  discovered from the novel page.
 - **`dedup_cache.py`** — removes duplicate chapters from a `novel.py`
   cache directory.
 
@@ -33,6 +37,18 @@ Two small Python tools that save web content as EPUB ebooks:
 # WordPress blog novel: quick 2-chapter test
 ./.venv/bin/python wp_novel.py https://bluesilvertranslations.wordpress.com/chapter-list/ \
     -o test.epub --start 1 --end 2 --min-delay 1 --max-delay 2
+
+# Wuxiaworld novel: quick 3-chapter test (~1 minute)
+./.venv/bin/python wuxia_novel.py https://www.wuxiaworld.com/novel/rebirth-of-tang-san \
+    -o test.epub --start 0 --end 2 --min-delay 1 --max-delay 2
+
+# Wuxiaworld novel: the whole thing (~1 hour at the default polite pace)
+./.venv/bin/python wuxia_novel.py https://www.wuxiaworld.com/novel/rebirth-of-tang-san \
+    -o rebirth-of-tang-san.epub
+
+# Novellunar text + wuxiaworld titles: quick 2-chapter test
+./.venv/bin/python novel_wuxia.py https://novellunar.com/novel/soul-land-5-the-rebirth-of-tang-san \
+    --wuxia-slug rebirth-of-tang-san -o test.epub --start 1 --end 2 --min-delay 1 --max-delay 2
 ```
 
 ## Setup from scratch
@@ -96,10 +112,86 @@ Example — bundle several articles into one reading list:
 | `--no-meta` | Skip fetching title/author/synopsis metadata |
 | `--cache-dir` | Where to keep downloaded chapters (default: `./.cache/<slug>/`) |
 | `--refresh` | Ignore the cache and re-download everything |
+| `--offline` | Don't fetch anything online; rebuild the EPUB from cached chapters only |
 | `--no-dedup` | Keep chapters with identical text (default: skip duplicates) |
 
 The novel URL looks like `https://novellunar.com/novel/<slug>` — just paste
 the novel's main page.
+
+### wuxia_novel.py — Wuxiaworld novels to EPUB
+
+```bash
+./.venv/bin/python wuxia_novel.py NOVEL_URL [-o book.epub] [--start N] [--end N]
+    [--min-delay 2] [--max-delay 4] [--title "Title"] [--no-cover] [--no-meta]
+```
+
+| Option | What it does |
+|---|---|
+| `-o, --output` | Output file (default: `<novel-slug>.epub`) |
+| `--title` | Book title (default: taken from the novel page) |
+| `--start` / `--end` | Chapter range, e.g. `--start 0 --end 100` |
+| `--min-delay` / `--max-delay` | Random pause between chapters in seconds (default: 2–4) |
+| `--no-cover` | Skip downloading the cover image |
+| `--no-meta` | Skip fetching title/author/count metadata (not supported for wuxiaworld) |
+| `--cache-dir` | Where to keep downloaded chapters (default: `./.cache/wuxia-<slug>/`) |
+| `--refresh` | Ignore the cache and re-download everything |
+| `--no-dedup` | Keep chapters with identical text (default: skip duplicates) |
+
+The novel URL looks like `https://www.wuxiaworld.com/novel/<slug>`. Chapter
+numbers on wuxiaworld start at **0** (chapter 0 is usually the prologue).
+The novel-specific chapter URL prefix (e.g. `sl5-chapter-`) and the total
+chapter count are discovered from the novel page automatically.
+
+Known limitation: the newest/final chapter of a novel may be login-gated on
+the site (only a teaser renders for anonymous visitors). Such chapters are
+skipped and reported at the end of the run rather than failing it.
+
+### novel_wuxia.py — novellunar text with wuxiaworld titles
+
+```bash
+./.venv/bin/python novel_wuxia.py NOVEL_URL --wuxia-slug WUXIA_SLUG
+    [-o book.epub] [--start N] [--end N] [--title-offset -1]
+    [--min-delay 2] [--max-delay 4] [--title "Title"]
+    [--no-cover] [--no-meta]
+```
+
+| Option | What it does |
+|---|---|
+| `--wuxia-slug` | **(required)** the novel's slug on wuxiaworld.com, e.g. `rebirth-of-tang-san` |
+| `--title-offset` | Wuxiaworld chapter number = novellunar number + offset (default: `-1`) |
+| `--title-cache-dir` | Where to keep fetched titles (default: `./.cache/wuxia-titles-<slug>/`) |
+
+Chapter text comes from novellunar (whose titles are generic "Chapter N"),
+and each chapter is re-titled with the matching wuxiaworld chapter title.
+The offset was verified for Soul Land 5 (novellunar ch. 1 = wuxiaworld ch. 0
+"Prologue"); adjust it if another novel's numbering differs. Text caching is
+shared with `novel.py`, so chapters you already downloaded are reused.
+Wuxiaworld renders chapter titles even for login-gated chapters (only the
+body is gated), so titles work without logging in; the " (Teaser)" suffix on
+gated titles is stripped automatically.
+
+### Finishing Soul Land 5 via wuxiaworld's daily unlocks
+
+Wuxiaworld login-gates its newest chapters, but logged-in readers get free
+daily check-in keys plus Wait-to-Unlock free chapters. Two helpers support
+that flow:
+
+- **`fetch_unlocked.py`** — downloads the full text of chapters you've
+  unlocked on your wuxiaworld account, using a session exported from your
+  logged-in browser (the browser never sees the prose; it only exports the
+  session cookies/tokens as JSON):
+  ```bash
+  ./.venv/bin/python fetch_unlocked.py --auth wuxia-cookies.json --chapters 1101-1110
+  ```
+  Saves to `./.cache/wuxia-unlocked-rebirth-of-tang-san/`.
+- **`build_sl5_epub.py`** — assembles the complete book: novellunar chapters
+  1–1101 plus every unlocked wuxiaworld chapter 1101–1183:
+  ```bash
+  ./.venv/bin/python build_sl5_epub.py -o soul-land-5.epub
+  ```
+  Re-run it as more chapters unlock; the book grows each time. Add `--offline`
+  to rebuild purely from the local caches, without fetching metadata or the
+  cover from the network.
 
 ### Duplicate chapters
 
@@ -148,6 +240,7 @@ the EPUB without the repeats.
 | `--title` / `--author` | Book title/author (default: parsed from the blog, e.g. "Douluo Dalu" by "Tang Jia San Shao") |
 | `--start` / `--end` | Chapter range, 1-based positions in the list |
 | `--min-delay` / `--max-delay` | Random pause between chapters in seconds (default: 2–4) |
+| `--gdoc-delay` | Extra fixed pause after each Google Docs fetch, in seconds (default: 5) |
 | `--cache-dir` | Where to keep downloaded chapters (default: `./.cache/<blog-domain>/`) |
 | `--refresh` | Ignore the cache and re-download everything |
 | `--no-dedup` | Keep chapters with identical text (default: skip duplicates) |
@@ -158,11 +251,14 @@ How it works: the chapter-list page's volume sections are parsed in order
 chapter post's Google Docs link is followed and the published doc's
 paragraphs extracted. Volumes become sections in the book's table of
 contents. Same politeness rules as `novel.py` (random delays, backoff on
-rate limits), plus the same chapter cache for resumable runs.
+rate limits), plus the same chapter cache for resumable runs. Cache files
+are keyed by chapter slug plus a hash of the full URL, so generic slugs
+can't collide; caches from older versions are migrated automatically on
+the next run.
 
 ## Being polite to servers
 
-Both scripts behave like a human reader, not a bot swarm:
+All scripts behave like a human reader, not a bot swarm:
 
 - **Randomized delays** — `novel.py` waits a random 2–4 seconds between
   chapters, `scrape.py` 1.5–3 seconds between pages. No metronome timing.
@@ -196,6 +292,11 @@ Wait a while and try again with gentler pacing, e.g.
 JavaScript and can't be extracted; they're skipped with a warning rather
 than failing the whole run.
 
+**`wp_novel.py` seems stuck on a chapter** — it's probably retrying with
+backoff (now logged to stderr). Some chapter posts have malformed Google
+Docs links (literal quotes pasted into the href); those are detected and
+skipped in favor of the working embed URL.
+
 ## How it works
 
 - `scrape.py` fetches each page and uses
@@ -207,3 +308,9 @@ than failing the whole run.
   each chapter's server-rendered `<article>` element — no JavaScript or login
   needed. The cover is converted to JPEG since many e-readers can't display
   WebP.
+- `wuxia_novel.py` reads the novel page's `<h1>`, JSON-LD author, cover from
+  `og:image`, chapter count from its embedded data attribute, and discovers
+  the novel-specific chapter slug prefix (e.g. `sl5-chapter-`) from chapter
+  links. Each chapter page is server-rendered, so text is parsed straight
+  from `div.chapter-content div.chapter-body > p`, with the per-paragraph
+  comment badges stripped. The WebP cover is converted to JPEG.

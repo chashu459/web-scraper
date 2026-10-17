@@ -17,6 +17,11 @@ Two small Python tools that save web content as EPUB ebooks:
   EPUB, with cover, title, and author filled in automatically. The
   novel-specific chapter URL prefix and the total chapter count are
   discovered from the novel page.
+- **`webnovel.py`** — downloads a book from webnovel.com as a single EPUB.
+  Webnovel blocks plain HTTP clients with a Cloudflare challenge, so this
+  one drives a real Chromium browser via Playwright (needs
+  `pip install playwright` + `playwright install chromium`). Volumes become
+  sections in the book's table of contents.
 - **`dedup_cache.py`** — removes duplicate chapters from a `novel.py`
   cache directory.
 
@@ -49,6 +54,17 @@ Two small Python tools that save web content as EPUB ebooks:
 # Novellunar text + wuxiaworld titles: quick 2-chapter test
 ./.venv/bin/python novel_wuxia.py https://novellunar.com/novel/soul-land-5-the-rebirth-of-tang-san \
     --wuxia-slug rebirth-of-tang-san -o test.epub --start 1 --end 2 --min-delay 1 --max-delay 2
+
+# Webnovel book: quick 3-chapter test (needs Playwright, see below)
+./.venv/bin/python webnovel.py https://www.webnovel.com/book/36245749908869305 \
+    -o test.epub --start 0 --end 2 --min-delay 1 --max-delay 2
+```
+
+`webnovel.py` needs Playwright (webnovel.com blocks plain HTTP clients):
+
+```bash
+./.venv/bin/pip install playwright
+./.venv/bin/playwright install chromium
 ```
 
 ## Setup from scratch
@@ -160,6 +176,15 @@ skipped and reported at the end of the run rather than failing it.
 | `--wuxia-slug` | **(required)** the novel's slug on wuxiaworld.com, e.g. `rebirth-of-tang-san` |
 | `--title-offset` | Wuxiaworld chapter number = novellunar number + offset (default: `-1`) |
 | `--title-cache-dir` | Where to keep fetched titles (default: `./.cache/wuxia-titles-<slug>/`) |
+| `--auth` | Path to exported wuxiaworld login cookies — enables downloading full chapter **text** for chapters past novellunar's range (see below) |
+| `--wuxia-last` | Last wuxiaworld chapter number to include (default: auto from the novel page) |
+| `--wuxia-prefix` | Chapter URL prefix, e.g. `sl5-chapter-` (default: auto-discovered) |
+| `--cookies` | Cookie-Editor JSON export sent with novellunar requests — reuse a `cf_clearance` cookie after solving a Cloudflare challenge in a real browser |
+| `--impersonate` | Mimic a real browser's TLS fingerprint via curl_cffi, e.g. `--impersonate chrome` (needs `pip install curl_cffi`) |
+| `--chapter-count` | Skip the chapter-list API and assume chapters 1..N (that endpoint can be bot-blocked while chapter pages still work; empty chapters are skipped) |
+| `--browser` | Fetch tail chapters through a real Chromium window (persistent profile) — log in manually once; use when `--auth` cookies don't authenticate |
+| `--wuxia-profile` | Browser profile directory for `--browser` (default: `./.wuxia-profile/`) |
+| `--headless` | With `--browser`, hide the window (only after the login is saved) |
 
 Chapter text comes from novellunar (whose titles are generic "Chapter N"),
 and each chapter is re-titled with the matching wuxiaworld chapter title.
@@ -169,6 +194,98 @@ shared with `novel.py`, so chapters you already downloaded are reused.
 Wuxiaworld renders chapter titles even for login-gated chapters (only the
 body is gated), so titles work without logging in; the " (Teaser)" suffix on
 gated titles is stripped automatically.
+
+**Tail chapters past novellunar's range.** Novellunar sometimes stops
+before wuxiaworld does (Soul Land 5: novellunar ends at ch. 1101 =
+wuxiaworld 1100, wuxiaworld goes to 1183). With `--auth`, the script logs
+into wuxiaworld with your cookies and downloads the tail chapters' full
+text too, producing one complete EPUB. Tail chapters are cached in
+`./.cache/wuxia-unlocked-<slug>/` (shared with `fetch_unlocked.py`), so
+re-running only fetches newly unlocked ones; a chapter still locked for
+your session is skipped with a note — unlock it on wuxiaworld first, then
+re-run. Without `--auth`, the script prints how many tail chapters exist
+and skips them.
+
+Exporting cookies for `--auth`: in Chrome/Edge, log in to wuxiaworld.com,
+install the "Cookie-Editor" extension, open a wuxiaworld.com tab, then
+Cookie-Editor → Export and save the JSON to e.g. `wuxia-cookies.json`.
+The script accepts that raw export (a list of `{"name","value",...}`
+entries) or `{"cookies": {name: value}, "headers": {...}}`. Keep the file
+private — it is your login session — and re-export when downloads start
+coming back locked (cookies expire).
+
+```bash
+./.venv/bin/python novel_wuxia.py https://novellunar.com/novel/soul-land-5-the-rebirth-of-tang-san \
+    --wuxia-slug rebirth-of-tang-san --auth wuxia-cookies.json \
+    -o soul-land-5-complete.epub
+```
+
+**If cookie export doesn't authenticate** (the site may keep session state
+outside cookies), use `--browser` instead of `--auth`: the script opens a
+real Chromium window with a persistent profile (`./.wuxia-profile/`) —
+log in to wuxiaworld manually once in that window and press Enter in the
+terminal. The login is remembered, so later runs just work (add
+`--headless` once it's saved). Needs `pip install playwright` +
+`playwright install chromium` (already set up for `webnovel.py`).
+
+**If novellunar shows a captcha / 403s your requests:** the site sits behind
+Cloudflare, which sometimes challenges script traffic. Either solve the
+challenge once in your real browser (open the novel page, click through
+"Verify you are human"), export cookies with Cookie-Editor, and pass them
+via `--cookies` — the `cf_clearance` cookie lets the script through — or
+pass `--impersonate chrome` (needs `pip install curl_cffi`) so the
+script's TLS fingerprint looks like real Chrome. The two can be combined.
+Keep the polite delays; hammering a challenged IP can extend the block.
+The same `--cookies` / `--impersonate` flags exist on `novel.py`.
+
+### webnovel.py — webnovel.com books to EPUB
+
+```bash
+./.venv/bin/python webnovel.py BOOK_URL [-o book.epub] [--start N] [--end N]
+    [--min-delay 2] [--max-delay 4] [--title "Title"] [--no-cover] [--no-meta]
+    [--headed]
+```
+
+| Option | What it does |
+|---|---|
+| `-o, --output` | Output file (default: `webnovel-<bookId>.epub`) |
+| `--title` | Book title (default: taken from the book page) |
+| `--start` / `--end` | Chapter range, e.g. `--start 0 --end 50` |
+| `--min-delay` / `--max-delay` | Random pause between chapters in seconds (default: 3–6) |
+| `--no-cover` | Skip downloading the cover image |
+| `--no-meta` | Skip fetching title/author/synopsis metadata |
+| `--cache-dir` | Where to keep downloaded chapters (default: `./.cache/webnovel-<id>/`) |
+| `--refresh` | Ignore the cache and re-download everything |
+| `--offline` | Don't open the browser at all; rebuild the EPUB from cached chapters only |
+| `--no-dedup` | Keep chapters with identical text (default: skip duplicates) |
+| `--headed` | Show the browser window (useful if Cloudflare challenges the headless browser) |
+| `--profile` | Browser profile dir (default: `./.webnovel-profile/`); Cloudflare clearance cookies persist here, so you only solve the challenge once |
+| `--cdp` | Attach to your own running Chrome, e.g. `--cdp http://localhost:9222` (see below) |
+
+The book URL looks like `https://www.webnovel.com/book/<id>`. Unlike the
+other scripts, this one drives a real Chromium browser via Playwright
+(async API), because webnovel.com serves a Cloudflare JavaScript challenge
+to plain HTTP clients. Run it on your own machine — a residential
+connection plus a real browser passes the challenge. The chapter list is
+read from the book's `/catalog` page (volumes become sections in the book's
+table of contents), and chapter text comes from each chapter's
+server-rendered `div.cha-words` element. Locked (paywalled) chapters are
+skipped with a warning. If the site starts answering with "too many
+requests" pages, the script waits with exponential backoff (1m, 2m, 4m) and
+retries each chapter instead of recording it as empty — rerunning resumes
+where it left off. An empty chapter container is treated the same way (the
+server sometimes withholds text from throttled sessions), with a fallback
+to the paragraph markup embedded in the page's JSON-LD metadata. Failed
+sub-requests are logged to help diagnose stubborn pages. When a chapter
+yields no text for another reason, the page HTML is saved as
+`webnovel-debug-ch-<id>.html` for diagnosis.
+
+If the "Verifying you are human" challenge keeps looping: first try
+`--headed` and click the checkbox in the visible window — the clearance is
+saved in the profile. As a last resort, quit Chrome, reopen it with
+`--remote-debugging-port=9222`, visit webnovel.com once in it, then run the
+script with `--cdp http://localhost:9222`; it will drive a tab in your real
+browser, which Cloudflare already trusts.
 
 ### Finishing Soul Land 5 via wuxiaworld's daily unlocks
 
@@ -314,3 +431,7 @@ skipped in favor of the working embed URL.
   links. Each chapter page is server-rendered, so text is parsed straight
   from `div.chapter-content div.chapter-body > p`, with the per-paragraph
   comment badges stripped. The WebP cover is converted to JPEG.
+- `webnovel.py` drives a real Chromium via Playwright (plain HTTP gets a
+  Cloudflare challenge). The book's `/catalog` page gives the chapter list
+  with volume groupings; each chapter's server-rendered `div.cha-words > p`
+  is extracted with comment icons stripped.

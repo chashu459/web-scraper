@@ -95,5 +95,6 @@ def main():
     else:
         print(f"quarantined {n_moved} duplicate(s) to {quarantine}/")
 
+
 if __name__ == "__main__":
     main()

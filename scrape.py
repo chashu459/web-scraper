@@ -10,6 +10,7 @@ which pulls the main article text and drops nav/ads/comments.
 import argparse
 import datetime
 import html
+import json
 import random
 import sys
 import time
@@ -61,6 +62,51 @@ def make_headers(referer=None, user_agent=None):
 
 
 HEADERS = make_headers()  # default, kept for backwards compatibility
+
+
+def make_session(impersonate=None):
+    """Create an HTTP session for scraping.
+
+    impersonate: None for a plain requests session, or a curl_cffi
+    impersonation target such as "chrome" / "chrome124" / "safari" —
+    mimics a real browser's TLS fingerprint, which defeats
+    fingerprint-based bot blocking (e.g. Cloudflare). Requires the
+    curl_cffi package: pip install curl_cffi.
+    """
+    if not impersonate:
+        return requests.Session()
+    try:
+        from curl_cffi import requests as crequests
+    except ImportError:
+        raise RuntimeError("pip install curl_cffi to use --impersonate")
+    return crequests.Session(impersonate=impersonate)
+
+
+def load_cookies(session, path):
+    """Load cookies from a JSON file into a session; returns the count.
+
+    Accepts {"cookies": {name: value}} or a Cookie-Editor style list
+    [{"name":..., "value":..., "domain":...}, ...]. This lets the script
+    reuse a cf_clearance cookie after solving a Cloudflare challenge once
+    in a real browser.
+    """
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    n = 0
+    if isinstance(data, list):
+        for c in data:
+            if not c.get("name"):
+                continue
+            kw = {}
+            if c.get("domain"):
+                kw["domain"] = c["domain"]
+            session.cookies.set(c["name"], c.get("value", ""), **kw)
+            n += 1
+    else:
+        for name, value in (data.get("cookies") or {}).items():
+            session.cookies.set(name, value)
+            n += 1
+    return n
 
 
 def polite_sleep(min_s, max_s):

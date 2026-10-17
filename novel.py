@@ -42,7 +42,7 @@ from bs4 import BeautifulSoup
 from ebooklib import epub
 from PIL import Image
 
-from scrape import chapter_html, fetch_with_retry, polite_sleep
+from scrape import chapter_html, fetch_with_retry, polite_sleep, make_session, load_cookies
 
 API = "https://novellunar.com/api/novels/chapters"
 NOVEL_URL = "https://novellunar.com/novel/{slug}"
@@ -363,10 +363,34 @@ def main():
                          "no chapter list fetch)")
     ap.add_argument("--no-dedup", action="store_true",
                     help="Keep chapters with identical text (default: skip duplicates)")
+    ap.add_argument("--cookies", default=None, metavar="COOKIES_JSON",
+                    help="Cookie-Editor JSON export to send with requests — "
+                         "reuse a cf_clearance cookie after solving a "
+                         "Cloudflare challenge once in a real browser")
+    ap.add_argument("--impersonate", default=None, metavar="TARGET",
+                    help="Mimic a real browser's TLS fingerprint via curl_cffi "
+                         "(e.g. --impersonate chrome); needs: pip install curl_cffi")
+    ap.add_argument("--chapter-count", type=int, default=None, metavar="N",
+                    help="Skip the chapter-list API and assume chapters 1..N "
+                         "(the API endpoint can be bot-blocked while chapter "
+                         "pages still work; empty chapters are skipped)")
     args = ap.parse_args()
 
     slug = slug_from_url(args.url)
-    session = requests.Session()
+    try:
+        session = make_session(args.impersonate)
+    except RuntimeError as e:
+        print(f"  {e}", file=sys.stderr)
+        sys.exit(1)
+    if args.impersonate:
+        print(f"  TLS fingerprint impersonation: {args.impersonate}")
+    if args.cookies:
+        try:
+            n = load_cookies(session, args.cookies)
+            print(f"  loaded {n} cookies from {args.cookies}")
+        except Exception as e:
+            print(f"  --cookies failed: {e}", file=sys.stderr)
+            sys.exit(1)
     cache_dir = args.cache_dir or os.path.join(".cache", slug)
 
     meta = {}
@@ -396,7 +420,15 @@ def main():
         print(f"Found {len(chapters)} cached chapter(s).")
     else:
         print("Fetching chapter list ...")
-        chapters = get_chapters(slug, session)
+        if args.chapter_count:
+            # Bypass the /api/novels/chapters endpoint (it can be behind
+            # stricter bot protection than the chapter pages themselves).
+            # Empty (soft-404) chapters are skipped during download.
+            chapters = [(n, f"Chapter {n}")
+                        for n in range(1, args.chapter_count + 1)]
+            print(f"  using explicit chapter count: {args.chapter_count}")
+        else:
+            chapters = get_chapters(slug, session)
         print(f"Found {len(chapters)} chapters.")
         migrate_cache_keys(cache_dir, slug, chapters)
     if not chapters:

@@ -1,77 +1,75 @@
 # Web Scraper → EPUB
 
-Two small Python tools that save web content as EPUB ebooks:
-
-- **`scrape.py`** — extracts the main article text from any web page(s) and
-  saves them as an EPUB (one chapter per URL). Navigation, ads, and comments
-  are stripped automatically.
-- **`novel.py`** — downloads a whole novel from novellunar.com as a single
-  EPUB, with cover, title, author, synopsis, and genres filled in
-  automatically.
-- **`wp_novel.py`** — downloads a novel from a WordPress translation blog
-  (e.g. bluesilvertranslations.wordpress.com) as a single EPUB. Chapter
-  lists grouped under volume headings are parsed, and chapter text is pulled
-  from the embedded Google Docs each post links to. Volumes appear as
-  sections in the book's table of contents.
-- **`wuxia_novel.py`** — downloads a novel from wuxiaworld.com as a single
-  EPUB, with cover, title, and author filled in automatically. The
-  novel-specific chapter URL prefix and the total chapter count are
-  discovered from the novel page.
-- **`webnovel.py`** — downloads a book from webnovel.com as a single EPUB.
-  Webnovel blocks plain HTTP clients with a Cloudflare challenge, so this
-  one drives a real Chromium browser via Playwright (needs
-  `pip install playwright` + `playwright install chromium`). Volumes become
-  sections in the book's table of contents.
-- **`dedup_cache.py`** — removes duplicate chapters from a `novel.py`
-  cache directory.
-- **`eval_cache.py`** — evaluates a chapter cache: checks the numbers are
-  contiguous, finds duplicates, missing titles, empty chapters, and
-  suspiciously short chapters (truncated fetches or teaser-only pages).
-- **`diagnose.py`** — probes one chapter URL and classifies why the fetch
-  fails (Cloudflare block, plain 403, rate limit, soft-404, teaser-gated
-  content, JS-rendered page) with the suggested fix.
-
-## Quick start
+Download novels and articles as EPUB ebooks. **Start with `grab.py`** —
+give it any novel URL and it picks the right scraper, walking you through
+anything missing (like a chapter-list URL for WordPress blogs):
 
 ```bash
+./.venv/bin/python grab.py https://www.wuxiaworld.com/novel/rebirth-of-tang-san -o rts.epub
+```
+
+## Common recipes
+
+```bash
+# A novel, 2-chapter test first (~1 minute)
+./.venv/bin/python grab.py <novel-url> -o test.epub --start 1 --end 2 --min-delay 1 --max-delay 2
+
+# The whole novel (takes a few hours at the polite default pace)
+./.venv/bin/python grab.py <novel-url> -o book.epub
+
+# A chapter won't download? Diagnose the URL instead of guessing
+./.venv/bin/python diagnose.py <chapter-url>
+
+# Sanity-check a cache for gaps, dupes, or bad chapters
+./.venv/bin/python eval_cache.py .cache/<slug>
+
+# Rebuild the EPUB from the local cache only (no network)
+./.venv/bin/python grab.py <novel-url> -o book.epub --offline
+
 # Articles: one URL per chapter
 ./.venv/bin/python scrape.py https://example.com/article -o article.epub
-
-# Novel: quick 2-chapter test (~1 minute)
-./.venv/bin/python novel.py https://novellunar.com/novel/the-unrivaled-tang-sect \
-    -o test.epub --start 1 --end 2 --min-delay 1 --max-delay 2
-
-# Novel: the whole thing (takes a few hours at the default polite pace)
-./.venv/bin/python novel.py https://novellunar.com/novel/the-unrivaled-tang-sect \
-    -o tang-sect.epub
-
-# WordPress blog novel: quick 2-chapter test
-./.venv/bin/python wp_novel.py https://bluesilvertranslations.wordpress.com/chapter-list/ \
-    -o test.epub --start 1 --end 2 --min-delay 1 --max-delay 2
-
-# Wuxiaworld novel: quick 3-chapter test (~1 minute)
-./.venv/bin/python wuxia_novel.py https://www.wuxiaworld.com/novel/rebirth-of-tang-san \
-    -o test.epub --start 0 --end 2 --min-delay 1 --max-delay 2
-
-# Wuxiaworld novel: the whole thing (~1 hour at the default polite pace)
-./.venv/bin/python wuxia_novel.py https://www.wuxiaworld.com/novel/rebirth-of-tang-san \
-    -o rebirth-of-tang-san.epub
-
-# Novellunar text + wuxiaworld titles: quick 2-chapter test
-./.venv/bin/python novel_wuxia.py https://novellunar.com/novel/soul-land-5-the-rebirth-of-tang-san \
-    --wuxia-slug rebirth-of-tang-san -o test.epub --start 1 --end 2 --min-delay 1 --max-delay 2
-
-# Webnovel book: quick 3-chapter test (needs Playwright, see below)
-./.venv/bin/python webnovel.py https://www.webnovel.com/book/36245749908869305 \
-    -o test.epub --start 0 --end 2 --min-delay 1 --max-delay 2
 ```
 
-`webnovel.py` needs Playwright (webnovel.com blocks plain HTTP clients):
+`grab.py` handles novellunar, wuxiaworld, webnovel, and WordPress
+translation blogs. Webnovel needs Playwright (it blocks plain HTTP
+clients): `./.venv/bin/pip install playwright` then
+`./.venv/bin/playwright install chromium`. See `grab.py --help`, or
+`grab.py --dry-run <url>` to preview what it would run.
 
-```bash
-./.venv/bin/pip install playwright
-./.venv/bin/playwright install chromium
-```
+## Scripts
+
+**Novels** — normally run through `grab.py`, which forwards flags
+untouched:
+
+- **`novel.py`** — novellunar.com: full novel as one EPUB, with cover,
+  title, author, synopsis, and genres filled in automatically.
+- **`wuxia_novel.py`** — wuxiaworld.com: full novel as one EPUB; the
+  chapter URL prefix and total count are discovered from the novel page.
+- **`webnovel.py`** — webnovel.com: drives a real Chromium via Playwright;
+  volumes become sections in the table of contents.
+- **`wp_novel.py`** — WordPress translation blogs (e.g.
+  bluesilvertranslations): takes the blog's **chapter-list page** URL
+  (grab.py will ask for it if you give the blog home page); chapter text
+  comes from the embedded Google Docs each post links to.
+
+**Articles:**
+
+- **`scrape.py`** — extracts the main article text from any web page(s),
+  one chapter per URL; navigation, ads, and comments stripped.
+
+**Cache maintenance:**
+
+- **`dedup_cache.py`** — removes duplicate chapters from a cache
+  directory.
+- **`eval_cache.py`** — evaluates a chapter cache: contiguous numbering,
+  duplicates, missing titles, empty or suspiciously short chapters.
+- **`diagnose.py`** — probes one chapter URL and classifies why the fetch
+  fails (Cloudflare block, plain 403, rate limit, soft-404, teaser-gated
+  content, JS-rendered page), with the suggested fix.
+
+**Special cases** live in `special/` (see `special/README.md`) — one-off
+combinations like `novel_wuxia.py` (novellunar text with wuxiaworld
+titles, built for Soul Land 5) that don't fit the normal pattern.
 
 ## Setup from scratch
 
@@ -168,10 +166,13 @@ Known limitation: the newest/final chapter of a novel may be login-gated on
 the site (only a teaser renders for anonymous visitors). Such chapters are
 skipped and reported at the end of the run rather than failing it.
 
-### novel_wuxia.py — novellunar text with wuxiaworld titles
+### special/novel_wuxia.py — novellunar text with wuxiaworld titles
+
+A special case (see `special/README.md`): built for one novel, Soul Land 5.
+Run it from the repo root:
 
 ```bash
-./.venv/bin/python novel_wuxia.py NOVEL_URL --wuxia-slug WUXIA_SLUG
+./.venv/bin/python special/novel_wuxia.py NOVEL_URL --wuxia-slug WUXIA_SLUG
     [-o book.epub] [--start N] [--end N] [--title-offset -1]
     [--min-delay 2] [--max-delay 4] [--title "Title"]
     [--no-cover] [--no-meta]
@@ -221,7 +222,7 @@ private — it is your login session — and re-export when downloads start
 coming back locked (cookies expire).
 
 ```bash
-./.venv/bin/python novel_wuxia.py https://novellunar.com/novel/soul-land-5-the-rebirth-of-tang-san \
+./.venv/bin/python special/novel_wuxia.py https://novellunar.com/novel/soul-land-5-the-rebirth-of-tang-san \
     --wuxia-slug rebirth-of-tang-san --auth wuxia-cookies.json \
     -o soul-land-5-complete.epub
 ```

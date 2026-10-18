@@ -2,14 +2,14 @@
 """Assemble the complete Soul Land 5 EPUB from two sources:
 
 - Chapters 1..1101 (novellunar numbering): text from novellunar.com, cached
-  by novel.py / novel_wuxia.py in ./.cache/soul-land-5-the-rebirth-of-tang-san/
+  by novel.py / special/novel_wuxia.py in ./.cache/soul-land-5-the-rebirth-of-tang-san/
   Titles prefer the wuxiaworld title cache
   (./.cache/wuxia-titles-rebirth-of-tang-san/) when present.
 - Chapters 1101..1183 (wuxiaworld numbering): full text unlocked via the
   daily wuxiaworld job, stored in ./.cache/wuxia-unlocked-rebirth-of-tang-san/
   as <n>.json files with {"number", "title", "text"}. Fill this cache with
   fetch_unlocked.py --auth wuxia-cookies.json, or directly with
-  novel_wuxia.py --auth wuxia-cookies.json (which also builds the EPUB).
+  special/novel_wuxia.py --auth wuxia-cookies.json (which also builds the EPUB).
 
 Usage:
     python build_sl5_epub.py [-o soul-land-5.epub]

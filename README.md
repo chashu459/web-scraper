@@ -24,6 +24,9 @@ Two small Python tools that save web content as EPUB ebooks:
   sections in the book's table of contents.
 - **`dedup_cache.py`** — removes duplicate chapters from a `novel.py`
   cache directory.
+- **`eval_cache.py`** — evaluates a chapter cache: checks the numbers are
+  contiguous, finds duplicates, missing titles, empty chapters, and
+  suspiciously short chapters (truncated fetches or teaser-only pages).
 
 ## Quick start
 
@@ -342,6 +345,20 @@ For each set of identical chapters it keeps the lowest-numbered one and
 moves the rest to `<cache>/_duplicates/` (recoverable). `--delete` removes
 them permanently instead. After cleaning, re-running `novel.py` rebuilds
 the EPUB without the repeats.
+
+### Evaluating a chapter cache
+
+Before building an EPUB (or after changing a scraper), check the cache
+for gaps, duplicates, and bad chapters:
+
+```bash
+./.venv/bin/python eval_cache.py .cache/soul-land-5-the-rebirth-of-tang-san
+```
+
+Checks: contiguous numbering, no duplicate numbers, every chapter titled
+and non-empty, and no chapters under `--min-words` (default 200 — catches
+truncated fetches and teaser-only pages). Exit code is 0 when all checks
+pass, 1 otherwise.
 
 ## wp_novel.py — WordPress blog novels to EPUB
 

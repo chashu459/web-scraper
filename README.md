@@ -27,6 +27,9 @@ Two small Python tools that save web content as EPUB ebooks:
 - **`eval_cache.py`** — evaluates a chapter cache: checks the numbers are
   contiguous, finds duplicates, missing titles, empty chapters, and
   suspiciously short chapters (truncated fetches or teaser-only pages).
+- **`diagnose.py`** — probes one chapter URL and classifies why the fetch
+  fails (Cloudflare block, plain 403, rate limit, soft-404, teaser-gated
+  content, JS-rendered page) with the suggested fix.
 
 ## Quick start
 
@@ -359,6 +362,21 @@ Checks: contiguous numbering, no duplicate numbers, every chapter titled
 and non-empty, and no chapters under `--min-words` (default 200 — catches
 truncated fetches and teaser-only pages). Exit code is 0 when all checks
 pass, 1 otherwise.
+
+### Diagnosing a failed chapter fetch
+
+When a chapter won't download and the error is unclear, probe the URL
+directly instead of guessing:
+
+```bash
+./.venv/bin/python diagnose.py https://novellunar.com/novel/x/chapter-1102
+```
+
+It makes one polite request and reports what the server actually returned,
+the diagnosis (Cloudflare block, plain 403, 429 rate limit, soft-404,
+teaser-gated content, JS-rendered page, or fetch fine), and the suggested
+fix (`--cookies`, `--impersonate chrome`, slower delays, `--auth`, or the
+browser path). Supports `--cookies` and `--impersonate` like the scrapers.
 
 ## wp_novel.py — WordPress blog novels to EPUB
 

@@ -54,6 +54,12 @@ ADAPTERS = {
         "patterns": [r"(^|\.)wordpress\.com$"],
         "blurb": "WordPress translation blog chapter-list page",
     },
+    "shadowslave": {
+        "script": "shadowslave.py",
+        "site": "shadowslave.space",
+        "patterns": [r"(^|\.)shadowslave\.space$"],
+        "blurb": "shadowslave.space novel page (Shadow Slave)",
+    },
 }
 
 CHAPTER_LIST_HINTS = ("chapter", "toc", "contents", "list", "index")

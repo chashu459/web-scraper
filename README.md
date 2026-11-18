@@ -30,8 +30,8 @@ anything missing (like a chapter-list URL for WordPress blogs):
 ./.venv/bin/python scrape.py https://example.com/article -o article.epub
 ```
 
-`grab.py` handles novellunar, wuxiaworld, webnovel, and WordPress
-translation blogs. Webnovel needs Playwright (it blocks plain HTTP
+`grab.py` handles novellunar, wuxiaworld, webnovel, shadowslave.space, and
+WordPress translation blogs. Webnovel needs Playwright (it blocks plain HTTP
 clients): `./.venv/bin/pip install playwright` then
 `./.venv/bin/playwright install chromium`. See `grab.py --help`, or
 `grab.py --dry-run <url>` to preview what it would run.
@@ -47,6 +47,9 @@ untouched:
   chapter URL prefix and total count are discovered from the novel page.
 - **`webnovel.py`** — webnovel.com: drives a real Chromium via Playwright;
   volumes become sections in the table of contents.
+- **`shadowslave.py`** — shadowslave.space: Shadow Slave as one EPUB
+  (3,250 chapters); the chapter list comes from the list page's embedded
+  data, chapter text from each page's server-rendered `<article>`.
 - **`wp_novel.py`** — WordPress translation blogs (e.g.
   bluesilvertranslations): takes the blog's **chapter-list page** URL
   (grab.py will ask for it if you give the blog home page); chapter text
@@ -165,6 +168,22 @@ chapter count are discovered from the novel page automatically.
 Known limitation: the newest/final chapter of a novel may be login-gated on
 the site (only a teaser renders for anonymous visitors). Such chapters are
 skipped and reported at the end of the run rather than failing it.
+
+### shadowslave.py — Shadow Slave to EPUB
+
+```bash
+./.venv/bin/python shadowslave.py https://shadowslave.space/ [-o shadow-slave.epub]
+    [--start N] [--end N] [--min-delay 2] [--max-delay 4]
+    [--title "Title"] [--no-cover] [--no-meta]
+```
+
+Same options as `novel.py` (see its table above), with the cache in
+`./.cache/shadow-slave/`. The chapter list (all 3,250 titles) comes from
+the `/chapters/` page's embedded data in a single request; each chapter's
+text is parsed from its server-rendered `<article>`, with the header and
+the "read this chapter online" footer stripped. Site chapter titles like
+"Shadow Slave Chapter 1 - Chapter 1 - 1: Nightmare Begins" become
+"Chapter 1: Nightmare Begins" in the book.
 
 ### special/novel_wuxia.py — novellunar text with wuxiaworld titles
 

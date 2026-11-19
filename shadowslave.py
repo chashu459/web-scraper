@@ -27,6 +27,12 @@ Politeness: requests are sequential with a random delay between them
 mimic a real browser, and
 rate-limit (429) responses trigger exponential backoff. robots.txt allows
 crawling (Allow: /).
+
+Sessions: a long-lived HTTP session goes stale after a few hundred requests
+— every fetch starts timing out even though the site answers a fresh
+connection fine. So the session is recreated every 100 fresh downloads
+by default (see --session-refresh); cached chapters don't count, since
+they make no requests.
 """
 import argparse
 import hashlib
@@ -276,7 +282,8 @@ def get_chapter_text(session, number, timeout=30):
 def build_epub(chapters, session, out_path, book_title,
                min_delay, max_delay, start, end, meta=None,
                cover_bytes=None, cache_dir=None, refresh=False,
-               no_dedup=False, offline=False):
+               no_dedup=False, offline=False, session_factory=None,
+               session_refresh=100):
     book = epub.EpubBook()
     book.set_identifier(f"novel-{SLUG}-{int(time.time())}")
     book.set_title(book_title or (meta or {}).get("title") or "Shadow Slave")
@@ -295,6 +302,7 @@ def build_epub(chapters, session, out_path, book_title,
                 and (end is None or c[0] <= end)]
     toc = []
     n_cached = n_fresh = n_dupes = 0
+    n_since_refresh = 0  # fresh downloads on the current session
     seen_hashes = {}  # normalized-text hash -> chapter number
     for i, (number, title) in enumerate(selected, 1):
         chapter_title = clean_title(title, number) if title else f"Chapter {number}"
@@ -324,7 +332,19 @@ def build_epub(chapters, session, out_path, book_title,
             if cache_dir:
                 save_cached(cache_dir, key, number, chapter_title, text)
             n_fresh += 1
+            n_since_refresh += 1
             polite_sleep(min_delay, max_delay)
+            if (session_factory is not None and session_refresh
+                    and n_since_refresh >= session_refresh):
+                # Long-lived sessions go stale and start timing out;
+                # a fresh session keeps the run going.
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                session = session_factory()
+                n_since_refresh = 0
+                print(f"  session refreshed after {session_refresh} downloads")
         # Some sites list stale duplicate chapters (same text, different
         # number). Skip exact duplicates so the book doesn't repeat itself.
         if not no_dedup:
@@ -392,6 +412,10 @@ def main():
     ap.add_argument("--chapter-count", type=int, default=None, metavar="N",
                     help="Skip the chapter-list parse and assume chapters 1..N "
                          "(titles are read from each chapter page)")
+    ap.add_argument("--session-refresh", type=int, default=100, metavar="N",
+                    help="Recreate the HTTP session after every N fresh "
+                         "chapter downloads (default: 100; 0 disables). "
+                         "Long-lived sessions go stale and start timing out.")
     args = ap.parse_args()
 
     try:
@@ -454,7 +478,9 @@ def main():
                     args.min_delay, args.max_delay,
                     args.start, args.end, meta, cover_bytes,
                     cache_dir, args.refresh, args.no_dedup,
-                    offline=args.offline)
+                    offline=args.offline,
+                    session_factory=lambda: make_session(args.impersonate),
+                    session_refresh=args.session_refresh)
     sys.exit(0 if ok else 1)
 
 

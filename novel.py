@@ -25,6 +25,13 @@ Politeness: requests are sequential with a random delay between them
 mimic a real browser, and
 rate-limit (429) responses trigger exponential backoff. robots.txt allows
 crawling (Allow: /).
+
+If Cloudflare blocks plain HTTP entirely (403 / "Just a moment..." loop),
+pass --browser: the script opens a real Chromium window with a persistent
+profile, pauses so you can clear the "Verify you are human" check by hand,
+then copies the browser's cookies and user agent into the requests session
+and downloads the chapters the fast way. The profile remembers the
+clearance, so later runs can add --headless.
 """
 import argparse
 import hashlib
@@ -42,6 +49,7 @@ from bs4 import BeautifulSoup
 from ebooklib import epub
 from PIL import Image
 
+import scrape as scrape_mod
 from scrape import chapter_html, fetch_with_retry, polite_sleep, make_session, load_cookies
 
 API = "https://novellunar.com/api/novels/chapters"
@@ -213,6 +221,172 @@ def slug_from_url(url):
     return m.group(1)
 
 
+async def _launch_novellunar_context(pw, profile_dir, headed):
+    """Launch a persistent Chromium, preferring real Google Chrome.
+
+    Mirrors webnovel.py: no User-Agent override (Playwright's default
+    matches the real browser), AutomationControlled disabled, and the
+    navigator.webdriver flag hidden. Honors the standard *proxy env vars,
+    which plain requests picks up automatically but Playwright needs
+    passed explicitly.
+    """
+    args = ["--disable-blink-features=AutomationControlled"]
+    launch_kw = {"headless": not headed, "args": args}
+    proxy_url = (os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY")
+                 or os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY"))
+    if proxy_url:
+        proxy = {"server": proxy_url}
+        bypass = os.environ.get("no_proxy") or os.environ.get("NO_PROXY")
+        if bypass:
+            proxy["bypass"] = bypass
+        launch_kw["proxy"] = proxy
+    last_err = None
+    for channel in ("chrome", None):
+        try:
+            ctx = await pw.chromium.launch_persistent_context(
+                profile_dir, **launch_kw,
+                **({"channel": channel} if channel else {}),
+            )
+            await ctx.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', "
+                "{get: () => undefined});")
+            return ctx
+        except Exception as e:
+            last_err = e
+            print(f"  browser channel {channel or 'chromium'} unavailable: "
+                  f"{str(e)[:120]}", file=sys.stderr)
+    raise RuntimeError(f"no usable browser found: {last_err}")
+
+
+def _challenge_present(title, html):
+    return ("Just a moment" in (title or "")
+            or "Verifying you are human" in (html or "")
+            or "challenges.cloudflare.com" in (html or ""))
+
+
+def solve_challenge_via_browser(session, novel_url, profile_dir, headed=True):
+    """Clear Cloudflare's check in a real browser, then reuse its session.
+
+    Opens the novel page in a persistent Chromium (the profile remembers
+    the clearance, so this is a first-run step). Waits briefly for the
+    managed challenge to clear on its own, then — when headed — always
+    pauses so the user can click the checkbox in the visible window before
+    the download starts. Copies the browser's cookies and user agent into
+    the requests session, so the bulk download still runs over fast plain
+    HTTP instead of one browser navigation per chapter.
+
+    Returns True if the session can now fetch the novel page, False
+    otherwise. Raises RuntimeError if no usable browser is found.
+    """
+    import asyncio
+    import threading
+    from playwright.async_api import async_playwright
+
+    async def _run():
+        async with async_playwright() as pw:
+            ctx = await _launch_novellunar_context(pw, profile_dir, headed)
+            try:
+                page = await ctx.new_page()
+                print(f"  opening {novel_url} in the browser ...")
+                try:
+                    await page.goto(novel_url, timeout=60000,
+                                    wait_until="domcontentloaded")
+                except Exception as e:
+                    print(f"  browser navigation failed: {e}", file=sys.stderr)
+                # Give the managed challenge a moment to clear on its own.
+                cleared = False
+                for _ in range(20):
+                    try:
+                        title = await page.title()
+                        html = await page.content()
+                    except Exception:
+                        break
+                    if not _challenge_present(title, html):
+                        cleared = True
+                        break
+                    await page.wait_for_timeout(3000)
+                if headed:
+                    # Always pause: auto-detecting the challenge state is
+                    # unreliable, and this is the user's chance to click
+                    # the checkbox in the visible window.
+                    if cleared:
+                        print("  the challenge looks cleared already.")
+                    else:
+                        print("  Cloudflare is still showing its check.")
+                    print("  Use the browser window to clear the "
+                          "'Verify you are human' check if needed "
+                          "(first run only — the profile remembers it).")
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        None, input,
+                        "Press Enter here when ready to continue... ")
+                elif not cleared:
+                    print("  Warning: the challenge is still up and the "
+                          "browser is headless — re-run without --headless "
+                          "to clear it by hand.", file=sys.stderr)
+                try:
+                    ua = await page.evaluate("navigator.userAgent")
+                except Exception:
+                    ua = None
+                try:
+                    cookies = await ctx.cookies()
+                except Exception:
+                    cookies = []
+                n = 0
+                for c in cookies:
+                    try:
+                        kw = {"path": c.get("path") or "/"}
+                        if c.get("domain"):
+                            kw["domain"] = c["domain"]
+                        session.cookies.set(c["name"], c.get("value", ""), **kw)
+                        n += 1
+                    except Exception:
+                        continue
+                print(f"  copied {n} cookie(s) from the browser")
+                if ua:
+                    # fetch_with_retry builds its headers from scrape's
+                    # per-run user agent; point that at the browser's UA so
+                    # the clearance cookie and the UA agree.
+                    scrape_mod._SESSION_UA = ua
+                    print("  using the browser's user agent for requests")
+                return True
+            finally:
+                await ctx.close()
+
+    try:
+        asyncio.get_running_loop()
+        in_loop = True
+    except RuntimeError:
+        in_loop = False
+    if in_loop:
+        # e.g. Jupyter: run in a worker thread with its own loop
+        box = {}
+
+        def target():
+            box["result"] = asyncio.run(_run())
+
+        th = threading.Thread(target=target)
+        th.start()
+        th.join()
+        ran = box["result"]
+    else:
+        ran = asyncio.run(_run())
+    if not ran:
+        return False
+    # Verify the session can now fetch the novel page before downloading.
+    try:
+        r = fetch_with_retry(session, novel_url, timeout=30)
+    except Exception as e:
+        print(f"  session check failed: {e}", file=sys.stderr)
+        return False
+    if _challenge_present(None, r.text):
+        print("  still challenged after the browser step — clear the check "
+              "in the window and re-run.", file=sys.stderr)
+        return False
+    print(f"  session check passed: {r.status_code}, {len(r.text)} bytes")
+    return True
+
+
 def get_chapters(slug, session, limit=500):
     """Return [(number, title)] for every chapter, oldest first."""
     chapters = []
@@ -374,6 +548,17 @@ def main():
                     help="Skip the chapter-list API and assume chapters 1..N "
                          "(the API endpoint can be bot-blocked while chapter "
                          "pages still work; empty chapters are skipped)")
+    ap.add_argument("--browser", action="store_true",
+                    help="Clear Cloudflare's check in a real Chromium window "
+                         "first (persistent profile), then download over "
+                         "plain HTTP using the browser's cookies — use when "
+                         "plain requests get 403 / 'Just a moment...'")
+    ap.add_argument("--browser-profile", default="./.novellunar-profile/",
+                    help="Browser profile directory for --browser (default: "
+                         "./.novellunar-profile/)")
+    ap.add_argument("--headless", action="store_true",
+                    help="With --browser, hide the window (only after the "
+                         "challenge is cleared and saved in the profile)")
     args = ap.parse_args()
 
     slug = slug_from_url(args.url)
@@ -390,6 +575,22 @@ def main():
             print(f"  loaded {n} cookies from {args.cookies}")
         except Exception as e:
             print(f"  --cookies failed: {e}", file=sys.stderr)
+            sys.exit(1)
+    if args.browser:
+        print("Solving the Cloudflare challenge in a real browser ...")
+        novel_url = NOVEL_URL.format(slug=slug)
+        try:
+            ok = solve_challenge_via_browser(
+                session, novel_url, args.browser_profile,
+                headed=not args.headless)
+        except RuntimeError as e:
+            print(f"  browser step failed: {e}", file=sys.stderr)
+            sys.exit(1)
+        if not ok:
+            print("  the browser step did not clear the block. Re-run "
+                  "without --headless and clear the check by hand, or "
+                  "pass --cookies with an exported cf_clearance cookie.",
+                  file=sys.stderr)
             sys.exit(1)
     cache_dir = args.cache_dir or os.path.join(".cache", slug)
 

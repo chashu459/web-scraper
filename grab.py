@@ -13,7 +13,8 @@ for the missing piece before running anything.
 Options:
     -y, --yes        never prompt; fail instead if input is missing
                      (for scripts and cron)
-    --adapter NAME   force an adapter: novel, wuxia, webnovel, wp
+    --adapter NAME   force an adapter: novel, wuxia, webnovel, wp,
+                     shadowslave, akknovel
     --dry-run        print what would run, without running it
 
 Examples:
@@ -59,6 +60,12 @@ ADAPTERS = {
         "site": "shadowslave.space",
         "patterns": [r"(^|\.)shadowslave\.space$"],
         "blurb": "shadowslave.space novel page (Shadow Slave)",
+    },
+    "akknovel": {
+        "script": "akknovel.py",
+        "site": "akknovel.com",
+        "patterns": [r"(^|\.)akknovel\.com$"],
+        "blurb": "akknovel.com series page",
     },
 }
 

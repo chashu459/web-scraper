@@ -30,9 +30,9 @@ anything missing (like a chapter-list URL for WordPress blogs):
 ./.venv/bin/python scrape.py https://example.com/article -o article.epub
 ```
 
-`grab.py` handles novellunar, wuxiaworld, webnovel, shadowslave.space, and
-WordPress translation blogs. Webnovel needs Playwright (it blocks plain HTTP
-clients): `./.venv/bin/pip install playwright` then
+`grab.py` handles novellunar, wuxiaworld, webnovel, shadowslave.space,
+akknovel.com, and WordPress translation blogs. Webnovel needs Playwright (it
+blocks plain HTTP clients): `./.venv/bin/pip install playwright` then
 `./.venv/bin/playwright install chromium`. See `grab.py --help`, or
 `grab.py --dry-run <url>` to preview what it would run.
 
@@ -50,6 +50,9 @@ untouched:
 - **`shadowslave.py`** — shadowslave.space: Shadow Slave as one EPUB
   (3,250 chapters); the chapter list comes from the list page's embedded
   data, chapter text from each page's server-rendered `<article>`.
+- **`akknovel.py`** — akknovel.com: any series page as one EPUB; the
+  chapter list comes from the series page's `div#chapters`, chapter text
+  from each page's server-rendered `<article id="chapter-content">`.
 - **`wp_novel.py`** — WordPress translation blogs (e.g.
   bluesilvertranslations): takes the blog's **chapter-list page** URL
   (grab.py will ask for it if you give the blog home page); chapter text
@@ -184,6 +187,22 @@ text is parsed from its server-rendered `<article>`, with the header and
 the "read this chapter online" footer stripped. Site chapter titles like
 "Shadow Slave Chapter 1 - Chapter 1 - 1: Nightmare Begins" become
 "Chapter 1: Nightmare Begins" in the book.
+
+### akknovel.py — akknovel.com novel to EPUB
+
+```bash
+./.venv/bin/python akknovel.py https://www.akknovel.com/series/<slug> [-o <slug>.epub]
+    [--start N] [--end N] [--min-delay 2] [--max-delay 4]
+    [--title "Title"] [--no-cover] [--no-meta]
+```
+
+Same options as `novel.py` (see its table above), with the cache in
+`./.cache/akknovel-<slug>/`. The chapter list comes from the series page's
+`div#chapters` in a single request; each chapter's text is parsed from its
+server-rendered `<article id="chapter-content">`. Site chapter titles like
+"Ch.1 Enter the Palace with a Decree" become "Chapter 1: Enter the Palace
+with a Decree" in the book. Plain HTTP works — no login, cookies, or
+browser needed.
 
 ### special/novel_wuxia.py — novellunar text with wuxiaworld titles
 
